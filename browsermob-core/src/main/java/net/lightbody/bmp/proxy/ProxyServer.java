@@ -28,10 +28,12 @@ import org.apache.http.HttpRequestInterceptor;
 import org.apache.http.HttpResponseInterceptor;
 import org.java_bandwidthlimiter.BandwidthLimiter;
 import org.java_bandwidthlimiter.StreamManager;
+import org.littleshoot.proxy.ChainedProxy;
 import org.littleshoot.proxy.HttpFiltersSource;
 import org.openqa.selenium.Proxy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -780,6 +782,11 @@ public class ProxyServer implements LegacyProxyServer, BrowserMobProxy {
         } catch (TimeoutException e) {
             return false;
         }
+    }
+
+    @Override
+    public void setChainedProxy(ChainedProxy chainedProxy) {
+        throw new NotImplementedException();
     }
 
     @Override

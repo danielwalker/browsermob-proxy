@@ -7,6 +7,7 @@ import net.lightbody.bmp.proxy.BlacklistEntry;
 import net.lightbody.bmp.proxy.CaptureType;
 import net.lightbody.bmp.proxy.auth.AuthType;
 import net.lightbody.bmp.proxy.dns.AdvancedHostResolver;
+import org.littleshoot.proxy.ChainedProxy;
 import org.littleshoot.proxy.HttpFiltersSource;
 
 import java.net.InetAddress;
@@ -485,18 +486,10 @@ public interface BrowserMobProxy {
      */
     boolean waitForQuiescence(long quietPeriod, long timeout, TimeUnit timeUnit);
 
-    /**
-     * Sets an upstream proxy that this proxy will use to connect to external hosts.
-     *
-     * @param chainedProxyAddress address and port of the upstream proxy, or null to remove an upstream proxy
-     */
-    void setChainedProxy(InetSocketAddress chainedProxyAddress);
+    void setChainedProxy(ChainedProxy chainedProxy);
 
-    /**
-     * Returns the address and port of the upstream proxy.
-     *
-     * @return address and port of the upstream proxy, or null of there is none.
-     */
+    void setChainedProxy(InetSocketAddress chainedProxy);
+
     InetSocketAddress getChainedProxy();
 
     /**

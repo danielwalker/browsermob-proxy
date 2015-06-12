@@ -5,34 +5,15 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.MapMaker;
 import com.google.common.net.HostAndPort;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.*;
 import net.lightbody.bmp.client.ClientUtil;
 import net.lightbody.bmp.core.har.Har;
 import net.lightbody.bmp.core.har.HarLog;
 import net.lightbody.bmp.core.har.HarNameVersion;
 import net.lightbody.bmp.core.har.HarPage;
 import net.lightbody.bmp.exception.NameResolutionException;
-import net.lightbody.bmp.filters.AddHeadersFilter;
-import net.lightbody.bmp.filters.BlacklistFilter;
-import net.lightbody.bmp.filters.BrowserMobHttpFilterChain;
-import net.lightbody.bmp.filters.HarCaptureFilter;
-import net.lightbody.bmp.filters.HttpsHostCaptureFilter;
-import net.lightbody.bmp.filters.HttpsOriginalHostCaptureFilter;
-import net.lightbody.bmp.filters.LatencyFilter;
-import net.lightbody.bmp.filters.RegisterRequestFilter;
-import net.lightbody.bmp.filters.RequestFilter;
-import net.lightbody.bmp.filters.RequestFilterAdapter;
-import net.lightbody.bmp.filters.ResponseFilter;
-import net.lightbody.bmp.filters.ResponseFilterAdapter;
-import net.lightbody.bmp.filters.RewriteUrlFilter;
-import net.lightbody.bmp.filters.UnregisterRequestFilter;
-import net.lightbody.bmp.filters.WhitelistFilter;
-import net.lightbody.bmp.proxy.ActivityMonitor;
-import net.lightbody.bmp.proxy.BlacklistEntry;
-import net.lightbody.bmp.proxy.CaptureType;
-import net.lightbody.bmp.proxy.LegacyProxyServer;
-import net.lightbody.bmp.proxy.RewriteRule;
-import net.lightbody.bmp.proxy.Whitelist;
+import net.lightbody.bmp.filters.*;
+import net.lightbody.bmp.proxy.*;
 import net.lightbody.bmp.proxy.auth.AuthType;
 import net.lightbody.bmp.proxy.dns.AdvancedHostResolver;
 import net.lightbody.bmp.proxy.dns.DelegatingHostResolver;
@@ -43,14 +24,7 @@ import net.lightbody.bmp.ssl.BrowserMobProxyMitmManager;
 import org.apache.http.HttpRequestInterceptor;
 import org.apache.http.HttpResponseInterceptor;
 import org.java_bandwidthlimiter.StreamManager;
-import org.littleshoot.proxy.ChainedProxy;
-import org.littleshoot.proxy.ChainedProxyAdapter;
-import org.littleshoot.proxy.ChainedProxyManager;
-import org.littleshoot.proxy.HttpFilters;
-import org.littleshoot.proxy.HttpFiltersSource;
-import org.littleshoot.proxy.HttpFiltersSourceAdapter;
-import org.littleshoot.proxy.HttpProxyServer;
-import org.littleshoot.proxy.HttpProxyServerBootstrap;
+import org.littleshoot.proxy.*;
 import org.littleshoot.proxy.impl.DefaultHttpProxyServer;
 import org.openqa.selenium.Proxy;
 import org.slf4j.Logger;
@@ -59,16 +33,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -188,6 +153,9 @@ public class BrowserMobProxyServer implements BrowserMobProxy, LegacyProxyServer
      * The address of an upstream chained proxy to route traffic through.
      */
     private volatile InetSocketAddress upstreamProxyAddress;
+
+
+    private volatile ChainedProxy chainedProxy;
 
     /**
      * The address and socket on which the proxy will listen for client requests.
@@ -331,7 +299,14 @@ public class BrowserMobProxyServer implements BrowserMobProxy, LegacyProxyServer
             bootstrap.withThrottling(readBandwidthLimitBps, writeBandwidthLimitBps);
         }
 
-        if (upstreamProxyAddress != null) {
+        if (chainedProxy != null) {
+            bootstrap.withChainProxyManager(new ChainedProxyManager() {
+                @Override
+                public void lookupChainedProxies(HttpRequest httpRequest, Queue<ChainedProxy> chainedProxies) {
+                    chainedProxies.add(chainedProxy);
+                }
+            });
+        } else if (upstreamProxyAddress != null) {
             bootstrap.withChainProxyManager(new ChainedProxyManager() {
                 @Override
                 public void lookupChainedProxies(HttpRequest httpRequest, Queue<ChainedProxy> chainedProxies) {
@@ -341,6 +316,7 @@ public class BrowserMobProxyServer implements BrowserMobProxy, LegacyProxyServer
                             return upstreamProxyAddress;
                         }
                     });
+
                 }
             });
         }
@@ -1084,15 +1060,19 @@ public class BrowserMobProxyServer implements BrowserMobProxy, LegacyProxyServer
         return activityMonitor.waitForQuiescence(quietPeriod, timeout, timeUnit);
     }
 
-    /**
-     * Instructs this proxy to route traffic through an upstream proxy. Proxy chaining is not compatible with man-in-the-middle
-     * SSL, so HAR capture will be disabled for HTTPS traffic when using an upstream proxy.
-     *
-     * @param chainedProxyAddress address of the upstream proxy
-     */
     @Override
-    public void setChainedProxy(InetSocketAddress chainedProxyAddress) {
-        upstreamProxyAddress = chainedProxyAddress;
+    public void setChainedProxy(ChainedProxy chainedProxy) {
+        this.chainedProxy = chainedProxy;
+    }
+
+    @Override
+    public void setChainedProxy(final InetSocketAddress address) {
+        this.setChainedProxy(new ChainedProxyAdapter() {
+            @Override
+            public InetSocketAddress getChainedProxyAddress() {
+                return new InetSocketAddress(address.getHostString(), address.getPort());
+            }
+        });
     }
 
     @Override
@@ -1143,8 +1123,9 @@ public class BrowserMobProxyServer implements BrowserMobProxy, LegacyProxyServer
         if (httpProxy != null) {
             log.warn("Chained proxy support through setOptions is deprecated. Use setUpstreamProxy() to enable chained proxy support.");
 
-            HostAndPort hostAndPort = HostAndPort.fromString(httpProxy);
+            final HostAndPort hostAndPort = HostAndPort.fromString(httpProxy);
             this.setChainedProxy(new InetSocketAddress(hostAndPort.getHostText(), hostAndPort.getPortOrDefault(80)));
+
         } else {
             if (errorOnUnsupportedOperation) {
                 throw new UnsupportedOperationException("The LittleProxy-based implementation of BrowserMob Proxy does not support the setOptions method. Use the methods defined in the BrowserMobProxy interface to set connection parameters.");

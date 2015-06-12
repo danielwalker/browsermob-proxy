@@ -11,3 +11,4 @@ atlassian-ide-plugin.xml
 dependency-reduced-pom.xml
 littleproxy_cert
 littleproxy_keystore.jks
+.idea
